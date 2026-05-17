@@ -45,6 +45,7 @@ CLEANUP_INTERVAL = 10
 #   "capabilities": ["python"],     # 能力标签
 #   "input_content_types": ["text/plain", "application/json"],
 #   "output_content_types": ["text/plain"],
+#   "skills": [{"name": "playwright", ...}],
 #   "transport": "stdio",           # 传输方式：stdio / http
 #   "endpoint": null,               # 远程地址（http 模式）
 #   "registered_at": 1715700000.0,  # 注册时间
@@ -94,7 +95,12 @@ class RegistryHandler(BaseHTTPRequestHandler):
 
     def _read_body(self):
         length = int(self.headers.get("Content-Length", 0))
-        return json.loads(self.rfile.read(length)) if length else {}
+        if not length:
+            return {}
+        try:
+            return json.loads(self.rfile.read(length))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON body: {exc}") from exc
 
     # ----------------------------------------------------------
     #  GET 请求
@@ -136,11 +142,12 @@ class RegistryHandler(BaseHTTPRequestHandler):
         # GET /health — Registry 健康检查
         elif path == "/health":
             with agents_lock:
+                total = len(agents)
                 active = sum(1 for a in agents.values() if a["status"] == "active")
                 busy = sum(1 for a in agents.values() if a["status"] == "busy")
             self._send_json(200, {
                 "status": "healthy",
-                "agents_total": len(agents),
+                "agents_total": total,
                 "agents_active": active,
                 "agents_busy": busy,
                 "heartbeat_timeout": HEARTBEAT_TIMEOUT,
@@ -155,6 +162,26 @@ class RegistryHandler(BaseHTTPRequestHandler):
                     caps.update(a.get("capabilities", []))
             self._send_json(200, {"capabilities": sorted(caps)})
 
+        # GET /skills — 列出所有已注册的 Skill
+        elif path == "/skills":
+            skill_filter = params.get("name", [None])[0]
+            skills = {}
+            with agents_lock:
+                for agent in agents.values():
+                    for skill in agent.get("skills", []):
+                        name = skill.get("name")
+                        if not name:
+                            continue
+                        if skill_filter and skill_filter != name:
+                            continue
+                        entry = skills.setdefault(name, {**skill, "agents": []})
+                        entry["agents"].append({
+                            "id": agent["id"],
+                            "name": agent["name"],
+                            "status": agent["status"],
+                        })
+            self._send_json(200, {"skills": list(skills.values()), "count": len(skills)})
+
         else:
             self._send_json(404, {"error": "Not found"})
 
@@ -165,10 +192,14 @@ class RegistryHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        try:
+            data = self._read_body()
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+            return
 
         # POST /register — Agent 注册
         if path == "/register":
-            data = self._read_body()
             agent_id = data.get("id") or f"agent-{uuid.uuid4().hex[:8]}"
 
             agent = {
@@ -177,10 +208,12 @@ class RegistryHandler(BaseHTTPRequestHandler):
                 "description": data.get("description", ""),
                 "version": data.get("version", "0.0.0"),
                 "capabilities": data.get("capabilities", []),
+                "skills": data.get("skills", []),
                 "input_content_types": data.get("input_content_types", ["text/plain"]),
                 "output_content_types": data.get("output_content_types", ["text/plain"]),
                 "transport": data.get("transport", "stdio"),
                 "endpoint": data.get("endpoint"),
+                "metadata": data.get("metadata", {}),
                 "registered_at": time.time(),
                 "last_heartbeat": time.time(),
                 "status": "active"
@@ -194,7 +227,6 @@ class RegistryHandler(BaseHTTPRequestHandler):
 
         # POST /heartbeat — Agent 心跳
         elif path == "/heartbeat":
-            data = self._read_body()
             agent_id = data.get("id")
             status = data.get("status", "active")
 
@@ -209,7 +241,6 @@ class RegistryHandler(BaseHTTPRequestHandler):
 
         # POST /unregister — Agent 注销
         elif path == "/unregister":
-            data = self._read_body()
             agent_id = data.get("id")
 
             with agents_lock:
@@ -223,8 +254,8 @@ class RegistryHandler(BaseHTTPRequestHandler):
 
         # POST /search — 按能力搜索 Agent
         elif path == "/search":
-            data = self._read_body()
             required_caps = data.get("capabilities", [])
+            required_skills = data.get("skills", [])
             content_type = data.get("input_content_type")
 
             with agents_lock:
@@ -234,6 +265,9 @@ class RegistryHandler(BaseHTTPRequestHandler):
                         continue
                     # 检查是否具备所有要求的能力
                     if required_caps and not all(c in a["capabilities"] for c in required_caps):
+                        continue
+                    skill_names = [s.get("name") for s in a.get("skills", [])]
+                    if required_skills and not all(s in skill_names for s in required_skills):
                         continue
                     # 检查是否支持指定的输入类型
                     if content_type and content_type not in a["input_content_types"]:
@@ -265,6 +299,7 @@ def run_registry(port=3000):
     log(f"  GET  /agents?capability=x - 按能力筛选")
     log(f"  GET  /agents/{{id}}        - 查询单个 Agent")
     log(f"  GET  /capabilities        - 列出所有能力")
+    log(f"  GET  /skills              - 列出所有 Skill")
     log(f"  GET  /health              - Registry 健康检查")
     log(f"  POST /register            - Agent 注册")
     log(f"  POST /heartbeat           - Agent 心跳")

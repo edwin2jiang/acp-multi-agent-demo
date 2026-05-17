@@ -12,21 +12,21 @@ import subprocess
 import json
 import time
 import sys
-import os
 import select
 
 
 class ResilientACPClient:
     """支持断连检测和自动重连的 ACP Client"""
     
-    def __init__(self, agent_script):
-        self.agent_script = agent_script
+    def __init__(self, agent_module):
+        self.agent_module = agent_module
         self.proc = None
         self.msg_id = 0
         self.connected = False
         self.session_id = None
         self.reconnect_count = 0
         self.max_reconnects = 3
+        self.last_updates = []
     
     def log(self, msg):
         print(f"[Client] {msg}")
@@ -39,7 +39,7 @@ class ResilientACPClient:
         """启动 Agent 进程"""
         self.log("启动 Agent 进程...")
         self.proc = subprocess.Popen(
-            ["python3", self.agent_script],
+            [sys.executable, "-m", self.agent_module],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -93,6 +93,7 @@ class ResilientACPClient:
     
     def send(self, method, params, timeout=5):
         """发送请求，自动检测断连"""
+        self.last_updates = []
         if not self.is_alive():
             self.log("Agent 不在线，无法发送")
             return None
@@ -123,13 +124,19 @@ class ResilientACPClient:
                     return None
                 return {"error": "timeout"}
             
-            line = self.proc.stdout.readline()
-            if not line:
-                self.log("读取到 EOF: Agent 已断开")
-                self.connected = False
-                return None
-            
-            return json.loads(line)
+            while True:
+                line = self.proc.stdout.readline()
+                if not line:
+                    self.log("读取到 EOF: Agent 已断开")
+                    self.connected = False
+                    return None
+
+                message = json.loads(line)
+                if "method" in message:
+                    self.last_updates.append(message)
+                    continue
+                if message.get("id") == self.msg_id:
+                    return message
             
         except json.JSONDecodeError as e:
             self.log(f"JSON 解析失败: {e}")
@@ -234,10 +241,9 @@ def main():
     print("  ACP 断连检测与重连机制 Demo")
     print("=" * 60)
     
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    agent_script = os.path.join(script_dir, "crash_agent.py")
+    agent_module = "acp_demo.crash_agent"
     
-    client = ResilientACPClient(agent_script)
+    client = ResilientACPClient(agent_module)
     
     # 连接
     print("\n[1] 初始连接...")
@@ -261,6 +267,10 @@ def main():
     for i in range(8):
         print(f"\n--- 请求 {i+1} ---")
         resp = client.prompt(f"问题 {i+1}")
+        for update in client.last_updates:
+            text = update.get("params", {}).get("update", {}).get("content", {}).get("text")
+            if text:
+                print(f"  update: {text}")
         
         if resp and resp.get("result", {}).get("stopReason") == "end_turn":
             print(f"  结果: 成功")
