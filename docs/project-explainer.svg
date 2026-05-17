@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="960" viewBox="0 0 1400 960" role="img" aria-labelledby="title desc">
+  <title id="title">ACP multi-agent demo project explainer</title>
+  <desc id="desc">Architecture and usage diagram for the ACP standalone worker pool demo.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2f4858"/>
+    </marker>
+    <marker id="dashArrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"/>
+    </marker>
+    <style>
+      .bg { fill: #f7f8fa; }
+      .title { font: 700 34px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #17202a; }
+      .subtitle { font: 500 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #4b5563; }
+      .section { font: 700 22px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #1f2937; }
+      .label { font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #111827; }
+      .body { font: 500 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #374151; }
+      .small { font: 500 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #4b5563; }
+      .mono { font: 600 15px "SFMono-Regular", Consolas, monospace; fill: #1f2937; }
+      .card { fill: #ffffff; stroke: #d6dbe1; stroke-width: 1.4; rx: 8; }
+      .soft { fill: #eef6f3; stroke: #b9d5ca; stroke-width: 1.4; rx: 8; }
+      .client { fill: #edf2ff; stroke: #b8c7f2; stroke-width: 1.6; rx: 8; }
+      .worker { fill: #fff7e6; stroke: #e7c16e; stroke-width: 1.6; rx: 8; }
+      .registry { fill: #f3edff; stroke: #c9b7ea; stroke-width: 1.6; rx: 8; }
+      .warn { fill: #fff1f2; stroke: #f0a6ad; stroke-width: 1.4; rx: 8; }
+      .line { stroke: #2f4858; stroke-width: 2.4; fill: none; marker-end: url(#arrow); }
+      .dash { stroke: #6b7280; stroke-width: 2; stroke-dasharray: 8 7; fill: none; marker-end: url(#dashArrow); }
+      .thin { stroke: #9aa4b2; stroke-width: 1.3; fill: none; }
+      .badge { fill: #17202a; rx: 13; }
+      .badgeText { font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: white; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1400" height="960"/>
+
+  <text class="title" x="54" y="66">ACP Standalone 多会话并发 Demo</text>
+  <text class="subtitle" x="54" y="98">核心：一个 stdio Agent 是单路连接；要并发多个 conversation，就启动多个同能力 worker，并由 Client 做粘性路由。</text>
+
+  <rect class="warn" x="54" y="128" width="1292" height="86"/>
+  <text class="label" x="82" y="162">这个项目在演示什么？</text>
+  <text class="body" x="82" y="190">不要把多个会话强塞进一个 standalone stdio 进程；Client 应维护 conversation_id -&gt; worker/session 的绑定。</text>
+  <text class="body" x="750" y="190">Registry 只负责注册、心跳、搜索和健康观察，不转发对话消息。</text>
+
+  <text class="section" x="54" y="264">1. 运行时架构</text>
+
+  <rect class="client" x="72" y="296" width="350" height="250"/>
+  <text class="label" x="98" y="330">Client / Session Manager</text>
+  <text class="body" x="98" y="362">src/acp_demo/pool_client.py</text>
+  <line class="thin" x1="98" y1="379" x2="396" y2="379"/>
+  <text class="body" x="98" y="410">- 启动多个 worker 子进程</text>
+  <text class="body" x="98" y="438">- 新 conversation 轮询分配 worker</text>
+  <text class="body" x="98" y="466">- 保存粘性映射</text>
+  <text class="mono" x="118" y="498">chat-alpha -&gt; worker-1</text>
+  <text class="mono" x="118" y="522">chat-beta  -&gt; worker-2</text>
+
+  <rect class="card" x="472" y="312" width="270" height="198"/>
+  <text class="label" x="496" y="346">Sticky Map</text>
+  <text class="body" x="496" y="378">conversation_id</text>
+  <text class="body" x="496" y="406">绑定到：</text>
+  <text class="mono" x="518" y="438">worker_id</text>
+  <text class="mono" x="518" y="466">acp_session_id</text>
+
+  <rect class="worker" x="810" y="260" width="250" height="116"/>
+  <text class="label" x="836" y="296">worker-1</text>
+  <text class="body" x="836" y="326">standalone stdio</text>
+  <text class="small" x="836" y="352">same capabilities</text>
+
+  <rect class="worker" x="810" y="412" width="250" height="116"/>
+  <text class="label" x="836" y="448">worker-2</text>
+  <text class="body" x="836" y="478">standalone stdio</text>
+  <text class="small" x="836" y="504">same capabilities</text>
+
+  <rect class="worker" x="810" y="564" width="250" height="116"/>
+  <text class="label" x="836" y="600">worker-3</text>
+  <text class="body" x="836" y="630">standalone stdio</text>
+  <text class="small" x="836" y="656">same capabilities</text>
+
+  <rect class="registry" x="1114" y="368" width="232" height="172"/>
+  <text class="label" x="1140" y="404">Registry</text>
+  <text class="body" x="1140" y="436">src/acp_demo/registry.py</text>
+  <line class="thin" x1="1140" y1="452" x2="1320" y2="452"/>
+  <text class="body" x="1140" y="480">/register</text>
+  <text class="body" x="1140" y="508">/heartbeat</text>
+  <text class="body" x="1232" y="480">/agents</text>
+  <text class="body" x="1232" y="508">/health</text>
+
+  <path class="line" d="M 422 421 L 472 421"/>
+  <path class="line" d="M 742 391 C 770 354, 780 320, 808 318"/>
+  <path class="line" d="M 742 421 L 808 470"/>
+  <path class="line" d="M 742 451 C 770 512, 780 620, 808 622"/>
+  <text class="small" x="596" y="294">stdio JSON-RPC: initialize, session/new, session/prompt</text>
+
+  <path class="dash" d="M 1060 318 C 1095 338, 1098 382, 1112 404"/>
+  <path class="dash" d="M 1060 470 L 1112 470"/>
+  <path class="dash" d="M 1060 622 C 1095 596, 1098 540, 1112 516"/>
+  <text class="small" x="1076" y="338">注册 + 心跳</text>
+
+  <text class="section" x="54" y="622">2. 启动和运行</text>
+  <rect class="soft" x="72" y="654" width="610" height="224"/>
+  <text class="label" x="98" y="690">推荐一键演示</text>
+  <text class="mono" x="98" y="724">python3 -m venv .venv</text>
+  <text class="mono" x="98" y="754">source .venv/bin/activate</text>
+  <text class="mono" x="98" y="784">pip install -e .</text>
+  <text class="mono" x="98" y="814">acp-demo</text>
+  <text class="mono" x="98" y="844">acp-demo --workers 4</text>
+
+  <rect class="card" x="718" y="654" width="628" height="224"/>
+  <text class="label" x="744" y="690">其他入口</text>
+  <text class="mono" x="744" y="724">acp-client</text>
+  <text class="body" x="890" y="724">最小粘性路由 demo，只启动两个 worker</text>
+  <text class="mono" x="744" y="760">acp-registry</text>
+  <text class="body" x="890" y="760">单独启动 Registry，默认 http://127.0.0.1:3000</text>
+  <text class="mono" x="744" y="796">acp-reconnect-demo</text>
+  <text class="body" x="930" y="796">演示断连检测、重连、session/resume</text>
+  <text class="mono" x="744" y="840">PYTHONPATH=src python3 -m unittest discover -v</text>
+  <text class="body" x="744" y="866">运行测试：Registry API、runtime、真实 worker 子进程池</text>
+
+  <text class="section" x="54" y="926">3. 使用时看什么？</text>
+  <rect class="badge" x="246" y="906" width="145" height="30"/>
+  <text class="badgeText" x="262" y="926">chat-a 第二轮</text>
+  <text class="body" x="408" y="926">仍然回到第一次绑定的 worker；不同 chat 可以分散到不同 worker 并发处理。</text>
+</svg>

@@ -16,6 +16,7 @@ acp-demo = "acp_demo.run_demo:main"
 acp-client = "acp_demo.client:main"
 acp-reconnect-demo = "acp_demo.reconnection_demo:main"
 acp-registry = "acp_demo.registry:run_registry"
+acp-hermes = "acp_demo.hermes_acp_client:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

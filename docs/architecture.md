@@ -46,6 +46,29 @@ flowchart TB
 
 Registry 只告诉你 worker 存在与否，不决定某条消息去哪里。真正的路由状态在 Client 里。
 
+## 2.1 Hermes ACP 启动入口
+
+如果这个 demo 作为 Client 启动 Hermes Agent，链路是：
+
+```mermaid
+flowchart LR
+    Client["acp-hermes<br/>ACP Client"]
+    Hermes["Hermes Agent<br/>hermes acp"]
+    MCP["Optional MCP Servers<br/>tools/context"]
+
+    Client ==>|"spawn subprocess"| Hermes
+    Client ==>|"initialize"| Hermes
+    Client ==>|"session/new + mcpServers"| Hermes
+    Client ==>|"session/prompt"| Hermes
+    Hermes -. "connects if configured" .-> MCP
+```
+
+这里的“注册”主要发生在 ACP session 创建阶段：
+
+1. Client 启动 `hermes acp`，Hermes 作为 ACP server 暴露 `initialize`、`session/new`、`session/prompt` 等方法。
+2. Client 在 `session/new` 里把可选 `mcpServers` 传给 Hermes，Hermes 再加载这些 MCP 工具。
+3. 后续 prompt 都通过 ACP `session/prompt` 进入同一个 Hermes session。
+
 ## 3. 粘性路由
 
 ```mermaid
