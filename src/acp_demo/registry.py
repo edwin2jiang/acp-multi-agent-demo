@@ -39,8 +39,8 @@ CLEANUP_INTERVAL = 10
 #
 # {
 #   "id": "agent-xxx",              # 唯一 ID
-#   "name": "Python Agent",         # 显示名
-#   "description": "擅长 Python",   # 描述
+#   "name": "ACP Worker 1",         # 显示名
+#   "description": "同能力 worker", # 描述
 #   "version": "1.0.0",             # 版本
 #   "capabilities": ["python"],     # 能力标签
 #   "input_content_types": ["text/plain", "application/json"],

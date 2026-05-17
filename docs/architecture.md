@@ -1,130 +1,98 @@
-# ACP Demo 架构图解
+# ACP Standalone Worker Pool 架构图解
 
-这份文档用 Mermaid 图解释 demo 的运作原理。你可以把它当作读代码前的地图。
+这份文档解释“同能力 Agent + 多会话并发”的核心设计。
 
-## 1. 总览
+## 1. 问题
 
-```mermaid
-flowchart TB
-    subgraph Agents["Agent 进程"]
-        Python["Python Agent<br/>capabilities: python, testing<br/>skills: python-testing, openai-docs, playwright"]
-        Rust["Rust Agent<br/>capabilities: rust, performance<br/>skills: rust-performance, openai-docs"]
-        Skill["Skill Agent<br/>capabilities: documentation, diagram<br/>skills: browser, playwright, documents, spreadsheets, mermaid-diagrams"]
-    end
-
-    Registry["ACP Registry<br/>注册、发现、心跳、搜索"]
-    Client["Client / Editor<br/>任务路由 + 会话管理"]
-
-    Python -->|"POST /register"| Registry
-    Rust -->|"POST /register"| Registry
-    Skill -->|"POST /register"| Registry
-    Python -.->|"POST /heartbeat"| Registry
-    Rust -.->|"POST /heartbeat"| Registry
-    Skill -.->|"POST /heartbeat"| Registry
-
-    Client -->|"GET /agents"| Registry
-    Client -->|"GET /skills"| Registry
-    Client -->|"POST /search"| Registry
-    Registry -->|"Agent manifest 列表"| Client
-
-    Client ==>|"stdio JSON-RPC"| Python
-    Client ==>|"stdio JSON-RPC"| Rust
-    Client ==>|"stdio JSON-RPC"| Skill
-```
-
-## 2. 注册与发现
-
-```mermaid
-sequenceDiagram
-    participant A as Agent
-    participant R as Registry
-    participant C as Client
-
-    A->>R: POST /register<br/>id, name, capabilities, skills, transport
-    R-->>A: registered
-    loop every 10s
-        A->>R: POST /heartbeat<br/>id, status
-        R-->>A: ok
-    end
-    C->>R: GET /agents
-    R-->>C: available agent manifests
-    C->>R: GET /skills
-    R-->>C: skills grouped by agent
-```
-
-Registry 保存的是“可发现信息”：Agent 名字、能力、Skill、transport、endpoint 或启动信息。它不转发对话内容。
-
-## 3. Client 路由逻辑
+ACP standalone stdio 模式下，一个 Agent 进程通常对应一条双向 stdio 通道：
 
 ```mermaid
 flowchart LR
-    Task["用户任务<br/>例如：画 Mermaid 流程图"]
-    Extract["抽取需求标签<br/>diagram / documentation"]
-    Search["Registry /search<br/>capabilities + skills"]
-    Pick{"找到匹配 Agent?"}
-    SkillAgent["Skill Agent"]
-    Fallback["默认 Agent<br/>或提示无匹配"]
-    Stdio["建立 stdio 连接"]
+    Client["Client"]
+    Pipe["stdin/stdout<br/>single lane"]
+    Agent["one standalone Agent"]
 
-    Task --> Extract --> Search --> Pick
-    Pick -- "yes" --> SkillAgent --> Stdio
-    Pick -- "no" --> Fallback
+    Client <--> Pipe <--> Agent
 ```
 
-在当前 demo 里，路由规则故意保持简单：任务类型命中 `capabilities` 或 `skills.name` 就选择该 Agent。真实系统可以把这里替换成 embedding 检索、策略引擎或模型路由器。
+这条通道可以双向通信，但它不是天然的多路复用通道。多个 conversation 的流式 update、最终 response、取消和超时如果都挤在一条管道里，Client 会很难做清晰的并发隔离。
 
-## 4. stdio JSON-RPC 会话
+## 2. 目标模型
 
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant A as Selected Agent
-
-    C->>A: initialize
-    A-->>C: protocolVersion + agentInfo
-    C->>A: session/new
-    A-->>C: sessionId
-    C->>A: session/prompt
-    A-->>C: session/update<br/>agent_message_chunk
-    A-->>C: response<br/>stopReason=end_turn
-    C->>A: session/close
-    A-->>C: ok
-```
-
-这里最容易踩坑的是 `session/prompt`：Agent 可以先发多个 `session/update`，最后才发和请求 `id` 对应的 response。Client 不能只读一行，而要持续读到匹配的 response 为止。
-
-## 5. Skill 如何进入 manifest
+启动多个完全同能力 worker，让 Client 维护会话亲和：
 
 ```mermaid
 flowchart TB
-    Local["~/.codex/**/SKILL.md<br/>本机已有 Skill"]
-    Fallback["内置 fallback Skill<br/>保证 demo 可移植"]
-    Catalog["skill_catalog.py"]
-    Manifest["Agent manifest<br/>skills: [...]"]
-    Registry["Registry /skills"]
-    Client["Client 选择 Agent"]
+    subgraph Client["Client / Session Manager"]
+        Router["Sticky Router"]
+        Map["conversation_id -> worker_id + acp_session_id"]
+    end
 
-    Local --> Catalog
-    Fallback --> Catalog
-    Catalog --> Manifest --> Registry --> Client
+    Registry["Registry<br/>只做注册与健康观察"]
+
+    W1["worker-1<br/>same capabilities"]
+    W2["worker-2<br/>same capabilities"]
+    W3["worker-3<br/>same capabilities"]
+
+    Router --> Map
+    Router ==>|"stdio JSON-RPC"| W1
+    Router ==>|"stdio JSON-RPC"| W2
+    Router ==>|"stdio JSON-RPC"| W3
+
+    W1 -. "POST /register + heartbeat" .-> Registry
+    W2 -. "POST /register + heartbeat" .-> Registry
+    W3 -. "POST /register + heartbeat" .-> Registry
 ```
 
-`skill_catalog.py` 会尝试扫描本机 `~/.codex` 下的 `SKILL.md`。如果某些 Skill 不存在，就使用项目内置的 fallback 描述，所以 demo 在没有 Codex Skill 环境的机器上也能运行。
+Registry 只告诉你 worker 存在与否，不决定某条消息去哪里。真正的路由状态在 Client 里。
 
-## 6. 断连与重连
+## 3. 粘性路由
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Connected
-    Connected --> Sending: write JSON-RPC
-    Sending --> Waiting: wait response
-    Waiting --> Connected: response ok
-    Waiting --> Disconnected: EOF / timeout / BrokenPipe
-    Sending --> Disconnected: BrokenPipe
-    Disconnected --> Reconnecting: reconnect_count < max
-    Reconnecting --> Connected: initialize ok
-    Reconnecting --> Failed: retries exhausted
-    Failed --> [*]
+sequenceDiagram
+    participant U as User / Editor
+    participant C as Client Session Manager
+    participant W1 as worker-1
+    participant W2 as worker-2
+
+    U->>C: chat-a 第一轮
+    C->>C: chat-a 未绑定，分配 worker-1
+    C->>W1: session/new
+    W1-->>C: sessionId=worker_1_001
+    C->>W1: session/prompt
+    W1-->>C: session/update + final response
+
+    U->>C: chat-b 第一轮
+    C->>C: chat-b 未绑定，分配 worker-2
+    C->>W2: session/new
+    W2-->>C: sessionId=worker_2_001
+    C->>W2: session/prompt
+    W2-->>C: session/update + final response
+
+    U->>C: chat-a 第二轮
+    C->>C: chat-a 已绑定 worker-1
+    C->>W1: session/prompt(sessionId=worker_1_001)
+    W1-->>C: session/update + final response
 ```
 
-`reconnection_demo.py` 使用 `crash_agent.py` 模拟随机崩溃，Client 会检测 EOF、超时和 BrokenPipe，然后重新启动 Agent，并尝试恢复 session。
+关键点：`chat-a` 的第二轮不能重新分配，必须回到 `worker-1` 的同一个 ACP session。
+
+## 4. 并发来源
+
+```mermaid
+flowchart LR
+    A["chat-a"] --> W1["worker-1"]
+    B["chat-b"] --> W2["worker-2"]
+    C["chat-c"] --> W3["worker-3"]
+    D["chat-a next"] --> W1
+```
+
+并发不是来自“一个 standalone Agent 内部多路复用”，而是来自“多个 standalone Agent 进程并行运行”。
+
+## 5. 测试覆盖
+
+当前测试不是单纯测配置：
+
+- `test_registry_api.py` 启动临时 HTTP Registry，真实请求 `/register`、`/agents`、`/search`。
+- `test_agent_runtime.py` 直接验证 runtime 会返回 worker identity、session state 和 `session/update`。
+- `test_pool_client.py` 启动两个真实 worker 子进程，验证 `chat-a` 第二轮仍然回到原 worker。

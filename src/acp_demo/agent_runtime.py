@@ -12,11 +12,10 @@ from copy import deepcopy
 
 import requests
 
-from acp_demo.skill_catalog import select_skills_for_prompt
-
 
 REGISTRY_URL = os.environ.get("REGISTRY_URL", "http://127.0.0.1:3000")
 HEARTBEAT_INTERVAL = float(os.environ.get("HEARTBEAT_INTERVAL", "10"))
+PROMPT_DELAY = float(os.environ.get("ACP_PROMPT_DELAY", "0.25"))
 
 
 class StdioAgentRuntime:
@@ -69,15 +68,15 @@ class StdioAgentRuntime:
                 return part.get("text", "")
         return ""
 
-    def _response_text(self, prompt_text: str) -> str:
-        skills = select_skills_for_prompt(self.manifest.get("skills", []), prompt_text)
-        skill_names = ", ".join(skill["name"] for skill in skills) or "none"
+    def _response_text(self, session_id: str, prompt_text: str) -> str:
+        history_len = len(self.sessions.get(session_id, {}).get("history", []))
         capabilities = ", ".join(self.manifest.get("capabilities", []))
         return (
-            f"[{self.agent_name}] {self.response_style}: {prompt_text}\n"
-            f"- 匹配能力: {capabilities}\n"
-            f"- 选用 Skill: {skill_names}\n"
-            f"- Demo 说明: 这里模拟 Agent 基于 manifest 中的 capabilities/skills 接手任务。"
+            f"[{self.agent_name}] worker_id={self.agent_id}, session_id={session_id}\n"
+            f"- 本轮输入: {prompt_text}\n"
+            f"- 当前 worker 能力: {capabilities}\n"
+            f"- 该 ACP session 已处理轮次: {history_len}\n"
+            f"- Demo 说明: 这个 worker 是 standalone 单路连接，Client 用 conversation_id 把后续消息粘回同一进程。"
         )
 
     def handle_request(self, request: dict) -> dict | None:
@@ -128,7 +127,7 @@ class StdioAgentRuntime:
             self.current_status = "busy"
             self.log(f"处理: {prompt_text[:48]}")
 
-            time.sleep(0.25)
+            time.sleep(PROMPT_DELAY)
             update = {
                 "jsonrpc": "2.0",
                 "method": "session/update",
@@ -136,7 +135,7 @@ class StdioAgentRuntime:
                     "sessionId": session_id,
                     "update": {
                         "sessionUpdate": "agent_message_chunk",
-                        "content": {"type": "text", "text": self._response_text(prompt_text)},
+                        "content": {"type": "text", "text": self._response_text(session_id, prompt_text)},
                     },
                 },
             }
